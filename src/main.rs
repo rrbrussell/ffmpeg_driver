@@ -101,8 +101,13 @@ fn main() -> ExitCode {
         let temp_opus = pb_opus.to_str().unwrap();
         let pb_ivf = item.with_extension("ivf");
         let temp_ivf = pb_ivf.to_str().unwrap();
-        let pb_output = item.with_extension("out").with_extension("mkv");
+        let mut output_name = String::from(item.file_name().unwrap().to_str().unwrap());
+        output_name.push_str("-out");
+        let pb_output = item.with_file_name(output_name);
         let output_mkv = pb_output.to_str().unwrap();
+
+        let fix_message: &str = "Fix the problematic input file.";
+        let clean_message: &str = "Cleaning up and skipping to the next input file.";
 
         let ffmpeg_global_arguments = ["-hide_banner", "-loglevel", "fatal", "-y", "-stats"];
         println!("Processing {} into {}", input_mkv, output_mkv);
@@ -121,18 +126,9 @@ fn main() -> ExitCode {
             .args(ffmpeg_wav_arguments)
             .spawn()
             .expect("Cannot create a wav file");
-        match ffmpeg_wav.wait() {
-            Err(e) => {
-                println!("ffmpeg failed with {e}");
-                return ExitCode::FAILURE;
-            }
-            Ok(res) => {
-                if !res.success() {
-                    println!("Extracting audio failed.");
-                    _ = fs::remove_file(pb_wav);
-                    return ExitCode::FAILURE;
-                }
-            }
+        if !ffmpeg_wav.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_wav.clone());
         }
         println!("Audio extraction complete.");
         println!("Encoding audio with opus.");
@@ -141,13 +137,16 @@ fn main() -> ExitCode {
             .args(opusenc_arguments)
             .spawn()
             .expect("Cannot encode opus file.");
-        if let Err(e) = opusenc.wait() {
-            println!("opusenc failed with {e}");
-            return ExitCode::FAILURE;
+        if !opusenc.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_wav);
+            _ = fs::remove_file(pb_opus);
+            break;
+        } else {
+            // Throw away any errors. One unix platforms if you can create a file you can remove a file.
+            // We created the file earlier.
+            _ = fs::remove_file(pb_wav);
         }
-        // Throw away any errors. One unix platforms if you can create a file you can remove a file.
-        // We created the file earlier.
-        _ = fs::remove_file(pb_wav);
 
         println!("Extracting video.");
         let ffmpeg_y4m_arguments = [
@@ -170,9 +169,11 @@ fn main() -> ExitCode {
             .args(ffmpeg_y4m_arguments)
             .spawn()
             .expect("Cannot create a y4m file");
-        if let Err(e) = ffmpeg_y4m.wait() {
-            println!("ffmpeg failed with {e}");
-            return ExitCode::FAILURE;
+        if !ffmpeg_y4m.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_y4m);
+            _ = fs::remove_file(pb_opus);
+            break;
         }
         println!("Video extraction complete");
         println!("Encoding video with SvtAv1EncApp");
@@ -198,12 +199,16 @@ fn main() -> ExitCode {
             .args(av1_encoder_arguments)
             .spawn()
             .expect("Cannot start SvtAv1EncApp.");
-        if let Err(e) = av1_encoder.wait() {
-            println!("SvtAv1EncApp failed with {e}");
-            return ExitCode::FAILURE;
+        if !av1_encoder.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_y4m);
+            _ = fs::remove_file(pb_ivf);
+            _ = fs::remove_file(pb_opus);
+            break;
+        } else {
+            println!("Video encoding complete.");
+            _ = fs::remove_file(pb_y4m);
         }
-        println!("Video encoding complete.");
-        _ = fs::remove_file(pb_y4m);
 
         println!("Extracting the chapters.");
         let mkvextract_chapters_arguments = [input_mkv, "chapters", temp_chapters];
@@ -211,9 +216,12 @@ fn main() -> ExitCode {
             .args(mkvextract_chapters_arguments)
             .spawn()
             .expect("Cannot create a chapters file.");
-        if let Err(e) = mkvextract_chapters.wait() {
-            println!("mkvextract failed with {e}");
-            return ExitCode::FAILURE;
+        if !mkvextract_chapters.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_chapters);
+            _ = fs::remove_file(pb_ivf);
+            _ = fs::remove_file(pb_opus);
+            break;
         }
         println!("Creating the output file.");
         let mkvmerge_arguments = [
@@ -228,13 +236,19 @@ fn main() -> ExitCode {
             .args(mkvmerge_arguments)
             .spawn()
             .expect("Cannot start mkvmerge.");
-        if let Err(e) = mkvmerge.wait() {
-            println!("mkvmerge failed with {e}");
+        if !mkvmerge.wait().expect(fix_message).success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_output);
+            _ = fs::remove_file(pb_ivf);
+            _ = fs::remove_file(pb_opus);
+            _ = fs::remove_file(pb_chapters);
+            break;
+        } else {
+            println!("Completed converting {input_mkv} to {output_mkv}");
+            _ = fs::remove_file(pb_ivf);
+            _ = fs::remove_file(pb_opus);
+            _ = fs::remove_file(pb_chapters);
         }
-        println!("Completed converting {input_mkv} to {output_mkv}");
-        _ = fs::remove_file(pb_ivf);
-        _ = fs::remove_file(pb_opus);
-        _ = fs::remove_file(pb_chapters);
     }
     return ExitCode::SUCCESS;
 }

@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 fn main() -> ExitCode {
     let cli_arguments: Vec<String> = env::args().collect();
@@ -91,27 +91,25 @@ fn main() -> ExitCode {
 
     for item in to_proccess.iter() {
         let input_mkv = item.to_str().unwrap();
-        let pb_wav = item.with_extension("wav");
-        let temp_wav = pb_wav.to_str().unwrap();
         let pb_chapters = item.with_extension("xml");
         let temp_chapters = pb_chapters.to_str().unwrap();
-        let pb_y4m = item.with_extension("y4m");
-        let temp_y4m = pb_y4m.to_str().unwrap();
         let pb_opus = item.with_extension("opus");
         let temp_opus = pb_opus.to_str().unwrap();
         let pb_ivf = item.with_extension("ivf");
         let temp_ivf = pb_ivf.to_str().unwrap();
-        let mut output_name = String::from(item.file_name().unwrap().to_str().unwrap());
-        output_name.push_str("-out");
+        let mut output_name = String::from(item.file_stem().unwrap().to_str().unwrap());
+        output_name.push_str("-out.mkv");
         let pb_output = item.with_file_name(output_name);
         let output_mkv = pb_output.to_str().unwrap();
+        let pb_stats = item.with_extension("stats");
+        let temp_stats = pb_stats.to_str().unwrap();
 
         let fix_message: &str = "Fix the problematic input file.";
         let clean_message: &str = "Cleaning up and skipping to the next input file.";
 
         let ffmpeg_global_arguments = ["-hide_banner", "-loglevel", "fatal", "-y", "-stats"];
         println!("Processing {} into {}", input_mkv, output_mkv);
-        println!("Extracting audio.");
+        println!("Encoding the audio.");
         let ffmpeg_wav_arguments = [
             "-i",
             input_mkv,
@@ -119,36 +117,34 @@ fn main() -> ExitCode {
             "0:a:0",
             "-acodec",
             "pcm_s24le",
-            temp_wav,
+            "-f",
+            "wav",
+            "-",
         ];
         let mut ffmpeg_wav = Command::new("ffmpeg")
             .args(ffmpeg_global_arguments)
             .args(ffmpeg_wav_arguments)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
             .spawn()
-            .expect("Cannot create a wav file");
-        if !ffmpeg_wav.wait().expect(fix_message).success() {
-            println!("{clean_message}");
-            _ = fs::remove_file(pb_wav.clone());
-        }
-        println!("Audio extraction complete.");
-        println!("Encoding audio with opus.");
-        let opusenc_arguments = ["--bitrate", "192", "--vbr", temp_wav, temp_opus];
-        let mut opusenc = Command::new("opusenc")
+            .expect("Cannot find ffmpeg.");
+        let opusenc_arguments = ["--bitrate", "192", "--vbr", "-", temp_opus];
+        let opusenc = Command::new("opusenc")
             .args(opusenc_arguments)
-            .spawn()
-            .expect("Cannot encode opus file.");
-        if !opusenc.wait().expect(fix_message).success() {
+            .stdin(ffmpeg_wav.stdout.take().unwrap())
+            .status()
+            .expect("Cannot find opusenc.");
+        if !opusenc.success() {
             println!("{clean_message}");
-            _ = fs::remove_file(pb_wav);
             _ = fs::remove_file(pb_opus);
+            _ = ffmpeg_wav.wait();
             break;
         } else {
-            // Throw away any errors. One unix platforms if you can create a file you can remove a file.
-            // We created the file earlier.
-            _ = fs::remove_file(pb_wav);
+            _ = ffmpeg_wav.wait();
         }
 
-        println!("Extracting video.");
+        println!("Encoding video.");
         let ffmpeg_y4m_arguments = [
             "-i",
             input_mkv,
@@ -162,24 +158,19 @@ fn main() -> ExitCode {
             "-1",
             "-r",
             "24000/1001",
-            temp_y4m,
+            "-",
         ];
         let mut ffmpeg_y4m = Command::new("ffmpeg")
             .args(ffmpeg_global_arguments)
             .args(ffmpeg_y4m_arguments)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
             .spawn()
-            .expect("Cannot create a y4m file");
-        if !ffmpeg_y4m.wait().expect(fix_message).success() {
-            println!("{clean_message}");
-            _ = fs::remove_file(pb_y4m);
-            _ = fs::remove_file(pb_opus);
-            break;
-        }
-        println!("Video extraction complete");
-        println!("Encoding video with SvtAv1EncApp");
-        let av1_encoder_arguments = [
+            .expect("Cannot find ffmpeg.");
+        let av1_encoder_pass_1_arguments = [
             "-i",
-            temp_y4m,
+            "stdin",
             "--preset",
             "5",
             "--lookahead",
@@ -192,22 +183,72 @@ fn main() -> ExitCode {
             temp_ivf,
             "--crf",
             "38",
-            "--passes",
-            "2",
+            "--pass",
+            "1",
+            "--stats",
+            temp_stats,
         ];
-        let mut av1_encoder = Command::new("SvtAv1EncApp")
-            .args(av1_encoder_arguments)
-            .spawn()
-            .expect("Cannot start SvtAv1EncApp.");
-        if !av1_encoder.wait().expect(fix_message).success() {
+        let av1_encoder_pass_1 = Command::new("SvtAv1EncApp")
+            .args(av1_encoder_pass_1_arguments)
+            .stdin(ffmpeg_y4m.stdout.take().unwrap())
+            .status()
+            .expect("Cannot find SvtAv1EncApp.");
+        if !av1_encoder_pass_1.success() {
             println!("{clean_message}");
-            _ = fs::remove_file(pb_y4m);
             _ = fs::remove_file(pb_ivf);
-            _ = fs::remove_file(pb_opus);
+            _ = fs::remove_file(pb_stats);
+            _ = ffmpeg_y4m.wait();
             break;
         } else {
-            println!("Video encoding complete.");
-            _ = fs::remove_file(pb_y4m);
+            println!("Pass 1 Completed.");
+            _ = fs::remove_file(pb_ivf.clone());
+            _ = ffmpeg_y4m.wait();
+        }
+
+        let mut ffmpeg_y4m = Command::new("ffmpeg")
+            .args(ffmpeg_global_arguments)
+            .args(ffmpeg_y4m_arguments)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Cannot find ffmpeg.");
+        println!("Starting Pass 2.");
+        let av1_encoder_pass_2_arguments = [
+            "-i",
+            "stdin",
+            "--preset",
+            "5",
+            "--lookahead",
+            "120",
+            "--progress",
+            "2",
+            "--scd",
+            "1",
+            "-b",
+            temp_ivf,
+            "--crf",
+            "38",
+            "--pass",
+            "2",
+            "--stats",
+            temp_stats,
+        ];
+        let av1_encoder_pass_2 = Command::new("SvtAv1EncApp")
+            .args(av1_encoder_pass_2_arguments)
+            .stdin(ffmpeg_y4m.stdout.take().unwrap())
+            .status()
+            .expect("Cannot find SvtAv1EncApp.");
+        if !av1_encoder_pass_2.success() {
+            println!("{clean_message}");
+            _ = fs::remove_file(pb_ivf);
+            _ = fs::remove_file(pb_stats);
+            _ = ffmpeg_y4m.wait();
+            break;
+        } else {
+            println!("Pass 2 Completed.");
+            _ = ffmpeg_y4m.wait();
+            _ = fs::remove_file(pb_stats);
         }
 
         println!("Extracting the chapters.");

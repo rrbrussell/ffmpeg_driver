@@ -5,6 +5,8 @@ and Opus mkv for watching later.
 
 ## Important notes
 
+All prebuilt binaries are for Linux x86-64.
+
 Error handling still needs some work.
 
 Input is assumed to be telecined NTSC film. If your input files are not you

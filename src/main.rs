@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 
 fn main() -> ExitCode {
-    let cli_arguments: Vec<String> = env::args().collect();
+    let cli_arguments: Vec<String> = env::args().skip(1).collect();
 
     #[cfg(debug_assertions)]
     {
@@ -12,7 +12,7 @@ fn main() -> ExitCode {
         dbg!(cli_arguments.clone());
     }
 
-    if cli_arguments.len() == 1 {
+    if cli_arguments.len() == 0 {
         println!("Usage: ffmpeg_driver <directory>");
         return ExitCode::FAILURE;
     }
@@ -156,6 +156,8 @@ fn main() -> ExitCode {
             "yuv4mpegpipe",
             "-strict",
             "-1",
+            "-frames",
+            "1440",
             "-r",
             "24000/1001",
             "-",
@@ -252,31 +254,38 @@ fn main() -> ExitCode {
         }
 
         println!("Extracting the chapters.");
+        let chapters_in_input: bool;
         let mkvextract_chapters_arguments = [input_mkv, "chapters", temp_chapters];
         let mut mkvextract_chapters = Command::new("mkvextract")
             .args(mkvextract_chapters_arguments)
             .spawn()
             .expect("Cannot create a chapters file.");
-        if !mkvextract_chapters.wait().expect(fix_message).success() {
-            println!("{clean_message}");
-            _ = fs::remove_file(pb_chapters);
-            _ = fs::remove_file(pb_ivf);
-            _ = fs::remove_file(pb_opus);
-            break;
+        match mkvextract_chapters.wait() {
+            Err(_) => {
+                println!("{clean_message}");
+                _ = fs::remove_file(pb_chapters);
+                _ = fs::remove_file(pb_ivf);
+                _ = fs::remove_file(pb_opus);
+                break;
+            }
+            Ok(_) => {
+                if pb_chapters.is_file() {
+                    chapters_in_input = true;
+                } else {
+                    chapters_in_input = false;
+                }
+            }
         }
+
         println!("Creating the output file.");
-        let mkvmerge_arguments = [
-            temp_ivf,
-            temp_opus,
-            "--chapters",
-            temp_chapters,
-            "-o",
-            output_mkv,
-        ];
-        let mut mkvmerge = Command::new("mkvmerge")
-            .args(mkvmerge_arguments)
-            .spawn()
-            .expect("Cannot start mkvmerge.");
+        let mkvmerge_arguments = [temp_ivf, temp_opus, "-o", output_mkv];
+        let mkvmerge_chapters = ["--chapters", temp_chapters];
+        let mut mkvmerge_partial = Command::new("mkvmerge");
+        mkvmerge_partial.args(mkvmerge_arguments);
+        if chapters_in_input {
+            mkvmerge_partial.args(mkvmerge_chapters);
+        }
+        let mut mkvmerge = mkvmerge_partial.spawn().expect("Cannot start mkvmerge.");
         if !mkvmerge.wait().expect(fix_message).success() {
             println!("{clean_message}");
             _ = fs::remove_file(pb_output);

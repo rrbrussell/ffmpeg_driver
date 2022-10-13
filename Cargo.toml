@@ -1,8 +1,20 @@
 [package]
 name = "ffmpeg_driver"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
+doc = true
+default-run = "ffmpeg_driver"
+
+[features]
+pipe_test = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "ffmpeg_driver"
+
+[[bin]]
+name = "pipe_test"
+required-features = ["pipe_test"]
 
 [dependencies]

@@ -107,7 +107,7 @@ fn main() -> ExitCode {
         let fix_message: &str = "Fix the problematic input file.";
         let clean_message: &str = "Cleaning up and skipping to the next input file.";
 
-        let ffmpeg_global_arguments = ["-hide_banner", "-loglevel", "fatal", "-y", "-stats"];
+        let ffmpeg_global_arguments = ["-hide_banner", "-loglevel", "fatal", "-y", "-nostats"];
         println!("Processing {} into {}", input_mkv, output_mkv);
         println!("Encoding the audio.");
         let ffmpeg_wav_arguments = [
@@ -156,8 +156,6 @@ fn main() -> ExitCode {
             "yuv4mpegpipe",
             "-strict",
             "-1",
-            "-frames",
-            "1440",
             "-r",
             "24000/1001",
             "-",

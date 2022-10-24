@@ -11,6 +11,8 @@ I am not currently planning on implementing any parsing of the input stream meta
 
 ## Usage
 
+``--fps`` is optional. If it is not provided no fps conversion will happen.
+
 ```
 Usage: ffmpeg_driver [OPTIONS] --preset <preset> --crf <crf> [directory]...
 

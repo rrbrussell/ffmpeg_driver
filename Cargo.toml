@@ -1,6 +1,6 @@
 [package]
 name = "ffmpeg_driver"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 
 default-run = "ffmpeg_driver"
@@ -19,3 +19,4 @@ name = "pipe_test"
 required-features = ["pipe_test"]
 
 [dependencies]
+clap = {version="4", features=["cargo"]}

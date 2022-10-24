@@ -3,22 +3,62 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 
+use clap::command;
+use clap::Arg;
+use clap::ArgAction;
+
 fn main() -> ExitCode {
-    let cli_arguments: Vec<String> = env::args().skip(1).collect();
+    let commands: clap::Command = build_argument_processor();
+    let arguments = commands.get_matches();
 
-    #[cfg(debug_assertions)]
+    let preset: [&str; 2] = [
+        "--preset",
+        &arguments
+            .get_one::<u8>("preset")
+            .expect("Clap screwed up processing the arguments")
+            .to_string(),
+    ];
+
+    let crf: [&str; 2] = [
+        "--crf",
+        &arguments
+            .get_one::<u8>("crf")
+            .expect("Clap screwed up processing the arguments.")
+            .to_string(),
+    ];
+
+    let trial: [&str; 2];
+    if arguments.get_flag("trial") {
+        trial = ["-t", "120"];
+    } else {
+        trial = ["", ""];
+    }
+
+    let framerate: [&str; 2];
+    match arguments.get_one::<String>("fps") {
+        None => framerate = ["", ""],
+        Some(value) => {
+            if value.starts_with("ntsc") {
+                if value.ends_with("-film") {
+                    framerate = ["-r", "24000/1001"];
+                } else {
+                    framerate = ["-r", "30000/1001"];
+                }
+            } else {
+                if value.eq("pal") {
+                    framerate = ["-r", "25/1"];
+                } else {
+                    framerate = ["-r", "24/1"];
+                }
+            }
+        }
+    }
+
+    let mut paths: Vec<PathBuf> = Vec::with_capacity(env::args().len());
+    for path in arguments
+        .get_many::<String>("directory")
+        .expect("Clap screwed up processing the arguments.")
     {
-        println!("The provided arguments were:");
-        dbg!(cli_arguments.clone());
-    }
-
-    if cli_arguments.len() == 0 {
-        println!("Usage: ffmpeg_driver <directory>");
-        return ExitCode::FAILURE;
-    }
-
-    let mut paths: Vec<PathBuf> = Vec::with_capacity(cli_arguments.len());
-    for path in cli_arguments {
         match PathBuf::from(path.as_str()).canonicalize() {
             Result::Err(e) => {
                 eprintln!("I cannot process: {} because {}", path, e);
@@ -123,6 +163,7 @@ fn main() -> ExitCode {
         ];
         let mut ffmpeg_wav = Command::new("ffmpeg")
             .args(ffmpeg_global_arguments)
+            .args(trial)
             .args(ffmpeg_wav_arguments)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -156,13 +197,13 @@ fn main() -> ExitCode {
             "yuv4mpegpipe",
             "-strict",
             "-1",
-            "-r",
-            "24000/1001",
             "-",
         ];
         let mut ffmpeg_y4m = Command::new("ffmpeg")
             .args(ffmpeg_global_arguments)
+            .args(trial)
             .args(ffmpeg_y4m_arguments)
+            .args(framerate)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
@@ -171,8 +212,6 @@ fn main() -> ExitCode {
         let av1_encoder_pass_1_arguments = [
             "-i",
             "stdin",
-            "--preset",
-            "5",
             "--lookahead",
             "120",
             "--progress",
@@ -181,8 +220,6 @@ fn main() -> ExitCode {
             "1",
             "-b",
             temp_ivf,
-            "--crf",
-            "38",
             "--pass",
             "1",
             "--stats",
@@ -190,6 +227,8 @@ fn main() -> ExitCode {
         ];
         let av1_encoder_pass_1 = Command::new("SvtAv1EncApp")
             .args(av1_encoder_pass_1_arguments)
+            .args(preset)
+            .args(crf)
             .stdin(ffmpeg_y4m.stdout.take().unwrap())
             .status()
             .expect("Cannot find SvtAv1EncApp.");
@@ -207,7 +246,9 @@ fn main() -> ExitCode {
 
         let mut ffmpeg_y4m = Command::new("ffmpeg")
             .args(ffmpeg_global_arguments)
+            .args(trial)
             .args(ffmpeg_y4m_arguments)
+            .args(framerate)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
@@ -217,8 +258,6 @@ fn main() -> ExitCode {
         let av1_encoder_pass_2_arguments = [
             "-i",
             "stdin",
-            "--preset",
-            "5",
             "--lookahead",
             "120",
             "--progress",
@@ -227,8 +266,6 @@ fn main() -> ExitCode {
             "1",
             "-b",
             temp_ivf,
-            "--crf",
-            "38",
             "--pass",
             "2",
             "--stats",
@@ -236,6 +273,8 @@ fn main() -> ExitCode {
         ];
         let av1_encoder_pass_2 = Command::new("SvtAv1EncApp")
             .args(av1_encoder_pass_2_arguments)
+            .args(preset)
+            .args(crf)
             .stdin(ffmpeg_y4m.stdout.take().unwrap())
             .status()
             .expect("Cannot find SvtAv1EncApp.");
@@ -299,4 +338,46 @@ fn main() -> ExitCode {
         }
     }
     return ExitCode::SUCCESS;
+}
+
+fn build_argument_processor() -> clap::Command {
+    let mut temp: clap::Command = command!();
+    temp = temp.arg(
+        Arg::new("preset")
+            .long("preset")
+            .value_parser(clap::value_parser!(u8).range(0..14))
+            .action(ArgAction::Set)
+            .required(true)
+            .help("[0..13]"),
+    );
+    temp = temp.arg(
+        Arg::new("crf")
+            .long("crf")
+            .value_parser(clap::value_parser!(u8).range(0..64))
+            .action(ArgAction::Set)
+            .required(true)
+            .help("[0..63]"),
+    );
+    temp = temp.arg(
+        Arg::new("fps")
+            .long("fps")
+            .value_parser(["ntsc-film", "ntsc", "pal", "film"])
+            .action(ArgAction::Set)
+            .required(false)
+            .next_line_help(true)
+            .hide_possible_values(true)
+            .help("[possible values: ntsc-film, ntsc, pal, film]")
+            .long_help("ntsc-film: 24000/1001\nntsc: 30000/1001\npal: 25/1\nfilm: 24/1"),
+    );
+    temp = temp.arg(Arg::new("trial").long("trial").action(ArgAction::SetTrue).required(false).help(
+        "Perform a short trial encoding to test quality. Approximately 2 minutes in length.",
+    ));
+    temp = temp.arg(
+        Arg::new("directory")
+            .action(ArgAction::Append)
+            .required(false)
+            .value_parser(clap::builder::NonEmptyStringValueParser::new())
+            .help("A directory to process"),
+    );
+    return temp;
 }

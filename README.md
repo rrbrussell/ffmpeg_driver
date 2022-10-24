@@ -5,12 +5,41 @@ and Opus mkv for watching later.
 
 ## Important notes
 
-All prebuilt binaries are for Linux x86-64.
+This will only encode the first video and audio stream.
 
-Error handling still needs some work.
+I am not currently planning on implementing any parsing of the input stream metadata.
 
-Input is assumed to be telecined NTSC film. If your input files are not you
-will need to change the hard coded fps conversion by ffmpeg.
+## Usage
+
+```
+Usage: ffmpeg_driver [OPTIONS] --preset <preset> --crf <crf> [directory]...
+
+Arguments:
+  [directory]...
+          A directory to process
+
+Options:
+      --preset <preset>
+          [0..13]
+
+      --crf <crf>
+          [0..63]
+
+      --fps <fps>
+          ntsc-film: 24000/1001
+          ntsc: 30000/1001
+          pal: 25/1
+          film: 24/1
+
+      --trial
+          Perform a short trial encoding to test quality. Approximately 2 minutes in length.
+
+  -h, --help
+          Print help information (use `-h` for a summary)
+
+  -V, --version
+          Print version information
+```
 
 ## Dependencies
 
@@ -19,4 +48,3 @@ will need to change the hard coded fps conversion by ffmpeg.
 * SvtAv1EncApp
 * mkvextract
 * mkvmerge
-
